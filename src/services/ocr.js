@@ -2,10 +2,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import ffmpeg from 'fluent-ffmpeg';
-import ffmpegPath from '@ffmpeg-installer/ffmpeg';
 import { createWorker } from 'tesseract.js';
 
-ffmpeg.setFfmpegPath(ffmpegPath.path);
+// use the system ffmpeg installed via the Dockerfile
+ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 
 /**
  * Extract frames from a video at a fixed interval (fps) into a temp dir.
