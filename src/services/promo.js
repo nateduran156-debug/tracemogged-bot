@@ -22,7 +22,8 @@ export async function applyPromoRoles(guild, discordId) {
     if (!member.roles.cache.has(r.role_id)) {
       try {
         await member.roles.add(r.role_id);
-        granted.push(r.role_id);
+        const roleName = guild.roles.cache.get(r.role_id)?.name ?? r.role_id;
+        granted.push({ roleId: r.role_id, roleName });
       } catch {
         // Missing permissions or invalid role id — skip silently, staff can
         // check bot role hierarchy.

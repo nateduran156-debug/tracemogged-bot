@@ -411,13 +411,20 @@ async function handleButton(interaction) {
     const absentIds = JSON.parse(scan.absent_json);
 
     const attendedIds = [];
-    for (const [id, user] of Object.entries(Object.fromEntries(statements.allUsers.all().map((u) => [u.discord_id, u])))) {
-      if (detected.map((d) => d.toLowerCase()).includes(user.roblox_username.toLowerCase())) {
-        statements.addPromoPoints.run(1, id);
-        statements.incrementAttended.run(id);
-        statements.resetMissed.run(id);
-        await applyPromoRoles(interaction.guild, id);
-        attendedIds.push(id);
+    const promotionLines = [];
+    const detectedLower = detected.map((d) => d.toLowerCase());
+    const allUsers = statements.allUsers.all();
+
+    for (const user of allUsers) {
+      if (detectedLower.includes(user.roblox_username.toLowerCase())) {
+        statements.addPromoPoints.run(1, user.discord_id);
+        statements.incrementAttended.run(user.discord_id);
+        statements.resetMissed.run(user.discord_id);
+        const granted = await applyPromoRoles(interaction.guild, user.discord_id);
+        attendedIds.push(user.discord_id);
+        for (const { roleName } of granted) {
+          promotionLines.push(`[+] Promoted <@${user.discord_id}> to ${roleName}`);
+        }
       }
     }
 
@@ -431,17 +438,26 @@ async function handleButton(interaction) {
     if (settings?.log_channel_id) {
       const logChannel = await interaction.guild.channels.fetch(settings.log_channel_id).catch(() => null);
       if (logChannel) {
-        const pingLine = attendedIds.map((id) => `<@${id}>`).join(' ') || 'No attendees.';
+        // Plain text message so pings actually notify attendees.
+        const pingText = attendedIds.length
+          ? `Attendees: ${attendedIds.map((id) => `<@${id}>`).join(' ')}`
+          : 'Attendees: none';
+        await logChannel.send({ content: pingText });
+
+        // Components V2 message with summary + promotion lines.
+        const summaryLines = [
+          `Attendees: ${attendedIds.length}`,
+          `Absent/missed: ${absentIds.length}`,
+        ];
+        if (promotionLines.length) {
+          summaryLines.push('', ...promotionLines);
+        }
         await logChannel.send(
           componentsV2Payload(
             buildContainer({
               accentColor: Colors.success,
               heading: `Raid Scan #${scanId} Approved`,
-              lines: [
-                `Attendees: ${attendedIds.length}`,
-                `Absent/missed: ${absentIds.length}`,
-                pingLine,
-              ],
+              lines: summaryLines,
             })
           )
         );

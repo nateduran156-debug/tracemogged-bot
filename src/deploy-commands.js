@@ -12,15 +12,9 @@ const rest = new REST({ version: '10' }).setToken(config.token);
 const body = slashCommandData.map((c) => c.toJSON());
 
 async function main() {
-  if (config.guildId) {
-    console.log(`Deploying ${body.length} guild command(s) to guild ${config.guildId} (instant)...`);
-    await rest.put(Routes.applicationGuildCommands(config.clientId, config.guildId), { body });
-    console.log('Guild commands deployed.');
-  } else {
-    console.log(`Deploying ${body.length} global command(s). This can take up to an hour to propagate.`);
-    await rest.put(Routes.applicationCommands(config.clientId), { body });
-    console.log('Global commands deployed.');
-  }
+  console.log(`Deploying ${body.length} global command(s). This can take up to an hour to propagate.`);
+  await rest.put(Routes.applicationCommands(config.clientId), { body });
+  console.log('Global commands deployed.');
 }
 
 main().catch((err) => {
