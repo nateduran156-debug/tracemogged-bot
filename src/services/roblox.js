@@ -44,6 +44,32 @@ export async function verifyRobloxRegistration(username) {
 }
 
 /**
+ * Fetches all members of a Roblox group and returns a Set of lowercase usernames.
+ * Handles pagination automatically — works for groups of any size.
+ */
+export async function getGroupMemberUsernames(groupId) {
+  const usernames = new Set();
+  let cursor = '';
+
+  while (true) {
+    const url = `https://groups.roblox.com/v1/groups/${groupId}/users?limit=100&sortOrder=Asc${cursor ? `&cursor=${cursor}` : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch group members (${res.status})`);
+    const data = await res.json();
+
+    for (const entry of data?.data || []) {
+      const name = entry?.user?.username;
+      if (name) usernames.add(name.toLowerCase());
+    }
+
+    cursor = data?.nextPageCursor;
+    if (!cursor) break;
+  }
+
+  return usernames;
+}
+
+/**
  * Returns every group a Roblox user belongs to, as [{ id, name }].
  */
 export async function getUserGroups(robloxUserId) {

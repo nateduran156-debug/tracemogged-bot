@@ -101,6 +101,40 @@ async function handleSlashCommand(interaction) {
     return;
   }
 
+  if (name === 'raid_groupscan') {
+    await interaction.deferReply();
+    const groupId = interaction.options.getInteger('group_id', true);
+    await raidscan.runGroupScan({
+      guildId: interaction.guildId,
+      createdBy: interaction.user.id,
+      groupId,
+      reply: (payload) => interaction.editReply(payload),
+      editReply: (payload) => interaction.editReply(payload),
+    });
+    return;
+  }
+
+  if (name === 'raid_addattendee') {
+    const scanId = interaction.options.getInteger('scan_id', true);
+    const user = interaction.options.getUser('user', true);
+    const result = raidscan.addAttendeToScan(scanId, user.id);
+    if (!result.ok) {
+      await interaction.reply({
+        ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Could Not Add Attendee', lines: [result.reason] })),
+        ephemeral: true,
+      });
+    } else {
+      await interaction.reply(
+        componentsV2Payload(buildContainer({
+          accentColor: Colors.success,
+          heading: 'Attendee Added',
+          lines: [`${result.username} (<@${user.id}>) has been marked as attended on scan #${scanId}.`],
+        }))
+      );
+    }
+    return;
+  }
+
   if (name === 'promorole_add') {
     const points = interaction.options.getInteger('points', true);
     const role = interaction.options.getRole('role', true);

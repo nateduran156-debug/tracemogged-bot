@@ -12,6 +12,8 @@ import * as vetting from './commands/vetting.js';
 export const slashCommandData = [
   register.data,
   raidscan.data,
+  raidscan.groupScanData,
+  raidscan.addAttendeeData,
   promorole.addData,
   promorole.removeData,
   promorole.listData,

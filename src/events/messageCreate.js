@@ -41,6 +41,51 @@ export default function registerMessageHandler(client) {
     try {
       switch (commandName) {
 
+        case 'raid_groupscan': {
+          const groupId = Number(args[0]);
+          if (!groupId) {
+            await message.reply('Usage: `.raid_groupscan <roblox_group_id>`');
+            return;
+          }
+          const sent = await message.reply(
+            componentsV2Payload(buildContainer({
+              accentColor: Colors.info,
+              heading: 'Group Scan Started',
+              lines: [`Fetching members of Roblox group ${groupId}...`],
+            }))
+          );
+          await raidscan.runGroupScan({
+            guildId: message.guildId,
+            createdBy: message.author.id,
+            groupId,
+            reply: async () => {},
+            editReply: (payload) => sent.edit(payload),
+          });
+          break;
+        }
+
+        case 'raid_addattendee': {
+          const scanId = Number(args[0]);
+          const user = message.mentions.users.first();
+          if (!scanId || !user) {
+            await message.reply('Usage: `.raid_addattendee <scan_id> @user`');
+            return;
+          }
+          const result = raidscan.addAttendeToScan(scanId, user.id);
+          if (!result.ok) {
+            await message.reply(`Error: ${result.reason}`);
+          } else {
+            await message.reply(
+              componentsV2Payload(buildContainer({
+                accentColor: Colors.success,
+                heading: 'Attendee Added',
+                lines: [`${result.username} (<@${user.id}>) has been marked as attended on scan #${scanId}.`],
+              }))
+            );
+          }
+          break;
+        }
+
         case 'raidscan': {
           const attachment = message.attachments.first();
           if (!attachment) {

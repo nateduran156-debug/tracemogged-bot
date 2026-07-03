@@ -143,6 +143,7 @@ export const statements = {
   `),
   getRaidScan: db.prepare(`SELECT * FROM raid_scans WHERE id = ?`),
   updateRaidScanStatus: db.prepare(`UPDATE raid_scans SET status = ? WHERE id = ?`),
+  updateRaidScanDetected: db.prepare(`UPDATE raid_scans SET detected_json = ?, absent_json = ? WHERE id = ?`),
 
   insertTicket: db.prepare(`
     INSERT INTO tickets (channel_id, guild_id, user_id, answers_json)
