@@ -12,7 +12,7 @@ export const data = new SlashCommandBuilder()
 
 export async function run({ interactionOrMessage, robloxUsername, discordId, reply }) {
   if (!robloxUsername) {
-    await reply({ content: 'Usage: `.register robloxUsername`' });
+    await reply({ content: 'Usage: `.register robloxusername`' });
     return;
   }
 

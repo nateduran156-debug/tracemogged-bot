@@ -48,11 +48,12 @@ export async function fetchReactedUserIds(guild, messageLink) {
   return reactedIds;
 }
 
-function isProtectedFromKick(member, guild) {
+function isProtectedFromKick(member, guild, extraRoleIds = []) {
   if (member.id === guild.ownerId) return true;
   if (member.user.bot) return true;
   if (member.premiumSince) return true; // Nitro booster — never kicked.
   if (config.boosterRoleIds.some((rid) => member.roles.cache.has(rid))) return true;
+  if (extraRoleIds.some((rid) => member.roles.cache.has(rid))) return true;
   if (!member.kickable) return true;
   return false;
 }
@@ -87,7 +88,7 @@ export async function runActivityCheck({ guild, messageLink, role }) {
   return { reacted, missing, csvPath };
 }
 
-export function buildKickConfirmPayload({ role, missing, reason, protectedCount }) {
+export function buildKickConfirmPayload({ role, missing, reason, protectedCount, protectedRoleIds = [] }) {
   return componentsV2Payload(
     buildContainer({
       accentColor: Colors.danger,
@@ -110,12 +111,12 @@ export function buildKickConfirmPayload({ role, missing, reason, protectedCount 
   );
 }
 
-export async function kickNonReactors({ guild, missing, reason }) {
+export async function kickNonReactors({ guild, missing, reason, protectedRoleIds = [] }) {
   let kicked = 0;
   let skipped = 0;
 
   for (const member of missing) {
-    if (isProtectedFromKick(member, guild)) {
+    if (isProtectedFromKick(member, guild, protectedRoleIds)) {
       skipped++;
       continue;
     }

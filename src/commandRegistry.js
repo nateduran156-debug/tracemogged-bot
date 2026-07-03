@@ -8,6 +8,9 @@ import * as whitelistCmd from './commands/whitelist.js';
 import * as ticketpanel from './commands/ticketpanel.js';
 import * as verify from './commands/verify.js';
 import * as vetting from './commands/vetting.js';
+import * as boostprotect from './commands/boostprotect.js';
+import * as backup from './commands/backup.js';
+import * as lookup from './commands/lookup.js';
 
 export const slashCommandData = [
   register.data,
@@ -30,6 +33,10 @@ export const slashCommandData = [
   ticketpanel.ticketPanelData,
   verify.data,
   vetting.data,
+  boostprotect.data,
+  backup.backupData,
+  backup.restoreData,
+  lookup.data,
 ];
 
-export { register, raidscan, promorole, channels, activity, profile, whitelistCmd, ticketpanel, verify, vetting };
+export { register, raidscan, promorole, channels, activity, profile, whitelistCmd, ticketpanel, verify, vetting, boostprotect, backup, lookup };

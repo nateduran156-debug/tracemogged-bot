@@ -11,6 +11,9 @@ import {
   ticketpanel,
   verify,
   vetting,
+  boostprotect,
+  backup,
+  lookup,
 } from '../commandRegistry.js';
 import { config } from '../config.js';
 import {
@@ -223,9 +226,10 @@ async function handleSlashCommand(interaction) {
 
     const { missing } = await activity.runActivityCheck({ guild: interaction.guild, messageLink, role });
 
-    const protectedCount = missing.filter((m) => isProtectedFromKick(m, interaction.guild)).length;
+    const protectedRoleIds = boostprotect.getProtectedRoleIds(interaction.guildId);
+    const protectedCount = missing.filter((m) => activity.isProtectedFromKick(m, interaction.guild, protectedRoleIds)).length;
 
-    pendingKicks.set(interaction.channelId, { missing, reason });
+    pendingKicks.set(interaction.channelId, { missing, reason, protectedRoleIds });
 
     await interaction.editReply(
       activity.buildKickConfirmPayload({ role, missing, reason, protectedCount })
@@ -327,6 +331,48 @@ async function handleSlashCommand(interaction) {
     return;
   }
 
+  if (name === 'boostprotect') {
+    const sub = interaction.options.getSubcommand();
+    if (sub === 'add') {
+      const role = interaction.options.getRole('role', true);
+      await interaction.reply(boostprotect.addProtectedRole(interaction.guildId, role.id, interaction.user.id));
+    } else if (sub === 'remove') {
+      const role = interaction.options.getRole('role', true);
+      await interaction.reply(boostprotect.removeProtectedRole(interaction.guildId, role.id));
+    } else {
+      await interaction.reply(boostprotect.listProtectedRoles(interaction.guildId));
+    }
+    return;
+  }
+
+  if (name === 'lookup') {
+    const username = interaction.options.getString('username', true);
+    await interaction.reply(lookup.runLookup(username));
+    return;
+  }
+
+  if (name === 'backup') {
+    const tmpPath = backup.runBackup();
+    await interaction.reply(backup.backupPayload(tmpPath));
+    return;
+  }
+
+  if (name === 'restore') {
+    await interaction.deferReply();
+    const attachment = interaction.options.getAttachment('file', true);
+    const result = await backup.downloadAndRestore(attachment.url);
+    if (!result.ok) {
+      await interaction.editReply(
+        componentsV2Payload(
+          buildContainer({ accentColor: Colors.danger, heading: 'Restore Failed', lines: [result.reason] })
+        )
+      );
+    } else {
+      await interaction.editReply(backup.restoreSuccessPayload(result.counts));
+    }
+    return;
+  }
+
   if (name === 'ticketpanel') {
     const channel = interaction.options.getChannel('channel', true);
     await ticketpanel.postTicketPanel(channel);
@@ -385,20 +431,20 @@ async function handleButton(interaction) {
     if (settings?.log_channel_id) {
       const logChannel = await interaction.guild.channels.fetch(settings.log_channel_id).catch(() => null);
       if (logChannel) {
-        const ping = attendedIds.map((id) => `<@${id}>`).join(' ') || 'No attendees.';
-        await logChannel.send({
-          ...componentsV2Payload(
+        const pingLine = attendedIds.map((id) => `<@${id}>`).join(' ') || 'No attendees.';
+        await logChannel.send(
+          componentsV2Payload(
             buildContainer({
               accentColor: Colors.success,
               heading: `Raid Scan #${scanId} Approved`,
               lines: [
                 `Attendees: ${attendedIds.length}`,
                 `Absent/missed: ${absentIds.length}`,
+                pingLine,
               ],
             })
-          ),
-          content: ping,
-        });
+          )
+        );
       }
     }
 
@@ -442,6 +488,7 @@ async function handleButton(interaction) {
       guild: interaction.guild,
       missing: pending.missing,
       reason: pending.reason,
+      protectedRoleIds: pending.protectedRoleIds ?? [],
     });
     await interaction.editReply(
       componentsV2Payload(

@@ -88,13 +88,24 @@ export async function refreshMissedChannel(guild) {
     : ['No users currently have 2 or more missed raids.'];
 
   const { buildContainer, componentsV2Payload, Colors } = await import('../components.js');
-  await channel.send(
-    componentsV2Payload(
-      buildContainer({
-        accentColor: Colors.warning,
-        heading: 'Missed Raids (2+)',
-        lines,
-      })
-    )
+  const payload = componentsV2Payload(
+    buildContainer({
+      accentColor: Colors.warning,
+      heading: 'Missed Raids (2+)',
+      lines,
+    })
   );
+
+  // Try to edit the existing pinned message instead of spamming a new one.
+  if (settings.missed_message_id) {
+    const existing = await channel.messages.fetch(settings.missed_message_id).catch(() => null);
+    if (existing) {
+      await existing.edit(payload);
+      return;
+    }
+  }
+
+  // No existing message — send a fresh one and save its ID.
+  const sent = await channel.send(payload);
+  statements.upsertMissedMessageId.run(guild.id, sent.id);
 }

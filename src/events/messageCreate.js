@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { isWhitelisted } from '../whitelist.js';
-import { register, raidscan, promorole, channels, activity, profile, whitelistCmd, verify, vetting } from '../commandRegistry.js';
+import { register, raidscan, promorole, channels, activity, profile, whitelistCmd, verify, vetting, boostprotect, backup, lookup } from '../commandRegistry.js';
 import { buildContainer, componentsV2Payload, Colors } from '../components.js';
 import { pendingKicks } from '../pendingKicks.js';
 import { statements } from '../db.js';
@@ -215,11 +215,71 @@ export default function registerMessageHandler(client) {
             return;
           }
           const { missing } = await activity.runActivityCheck({ guild: message.guild, messageLink, role });
-          const protectedCount = missing.filter((m) => activity.isProtectedFromKick(m, message.guild)).length;
+          const protectedRoleIds = boostprotect.getProtectedRoleIds(message.guildId);
+          const protectedCount = missing.filter((m) => activity.isProtectedFromKick(m, message.guild, protectedRoleIds)).length;
           const confirmMsg = await message.reply(
             activity.buildKickConfirmPayload({ role, missing, reason, protectedCount })
           );
-          pendingKicks.set(confirmMsg.channelId, { missing, reason });
+          pendingKicks.set(confirmMsg.channelId, { missing, reason, protectedRoleIds });
+          break;
+        }
+
+        case 'boostprotect_add': {
+          const role = message.mentions.roles.first();
+          if (!role) {
+            await message.reply('Usage: `.boostprotect_add @role`');
+            return;
+          }
+          await message.reply(boostprotect.addProtectedRole(message.guildId, role.id, message.author.id));
+          break;
+        }
+
+        case 'boostprotect_remove': {
+          const role = message.mentions.roles.first();
+          if (!role) {
+            await message.reply('Usage: `.boostprotect_remove @role`');
+            return;
+          }
+          await message.reply(boostprotect.removeProtectedRole(message.guildId, role.id));
+          break;
+        }
+
+        case 'boostprotect_list': {
+          await message.reply(boostprotect.listProtectedRoles(message.guildId));
+          break;
+        }
+
+        case 'lookup': {
+          if (!args[0]) {
+            await message.reply('Usage: `.lookup robloxusername`');
+            return;
+          }
+          await message.reply(lookup.runLookup(args[0]));
+          break;
+        }
+
+        case 'backup': {
+          const tmpPath = backup.runBackup();
+          await message.reply(backup.backupPayload(tmpPath));
+          break;
+        }
+
+        case 'restore': {
+          const attachment = message.attachments.first();
+          if (!attachment) {
+            await message.reply('Attach your backup .json file to use `.restore`.');
+            return;
+          }
+          const result = await backup.downloadAndRestore(attachment.url);
+          if (!result.ok) {
+            await message.reply(
+              componentsV2Payload(
+                buildContainer({ accentColor: Colors.danger, heading: 'Restore Failed', lines: [result.reason] })
+              )
+            );
+          } else {
+            await message.reply(backup.restoreSuccessPayload(result.counts));
+          }
           break;
         }
 
