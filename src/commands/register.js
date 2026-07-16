@@ -12,7 +12,15 @@ export const data = new SlashCommandBuilder()
 
 export async function run({ interactionOrMessage, robloxUsername, discordId, reply }) {
   if (!robloxUsername) {
-    await reply({ content: 'Usage: `.register robloxusername`' });
+    await reply(
+      componentsV2Payload(
+        buildContainer({
+          accentColor: Colors.warning,
+          heading: 'How to register',
+          lines: ['`.register (username)`', '', 'example: `.register tracemogged`'],
+        })
+      )
+    );
     return;
   }
 

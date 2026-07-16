@@ -16,6 +16,8 @@ import * as vetting from './commands/vetting.js';
 import * as boostprotect from './commands/boostprotect.js';
 import * as backup from './commands/backup.js';
 import * as lookup from './commands/lookup.js';
+import * as flaggedlogs from './commands/flaggedlogs.js';
+import * as memberops from './commands/memberops.js';
 
 export const slashCommandData = [
   register.data,
@@ -29,6 +31,7 @@ export const slashCommandData = [
   raidstats.raidHistoryData,
   raidstats.adjustPointsData,
   raidstats.setKickThresholdData,
+  raidstats.setPointValueData,
   loa.loaData,
   loa.loaEndData,
   loa.checkLoaData,
@@ -52,6 +55,14 @@ export const slashCommandData = [
   backup.backupData,
   backup.restoreData,
   lookup.data,
+  flaggedlogs.flaggedPlayerLogsData,
+  flaggedlogs.setFlaggedLogsChannelData,
+  memberops.attendanceData,
+  memberops.resetMissedData,
+  memberops.unflagData,
+  memberops.demoteData,
+  memberops.raidResetData,
+  memberops.exportAllData,
 ];
 
 export {
@@ -73,4 +84,6 @@ export {
   boostprotect,
   backup,
   lookup,
+  flaggedlogs,
+  memberops,
 };

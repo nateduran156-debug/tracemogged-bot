@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS guild_settings (
   gate_channel_id TEXT,
   transcript_channel_id TEXT,
   missed_message_id TEXT,
-  kick_threshold INTEGER DEFAULT 3
+  kick_threshold INTEGER DEFAULT 3,
+  raid_point_value INTEGER DEFAULT 1,
+  flagged_logs_channel_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS whitelist (
@@ -96,6 +98,17 @@ CREATE TABLE IF NOT EXISTS loa_entries (
   added_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(discord_id, guild_id)
 );
+
+CREATE TABLE IF NOT EXISTS flagged_enforcement_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  guild_id TEXT NOT NULL,
+  discord_id TEXT NOT NULL,
+  roblox_username TEXT NOT NULL,
+  missed_raids INTEGER NOT NULL,
+  threshold INTEGER NOT NULL,
+  scan_id INTEGER NOT NULL,
+  logged_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 `);
 
 // Migrations for existing databases
@@ -103,6 +116,8 @@ try { db.exec(`ALTER TABLE guild_settings ADD COLUMN gate_channel_id TEXT`); } c
 try { db.exec(`ALTER TABLE guild_settings ADD COLUMN transcript_channel_id TEXT`); } catch {}
 try { db.exec(`ALTER TABLE guild_settings ADD COLUMN missed_message_id TEXT`); } catch {}
 try { db.exec(`ALTER TABLE guild_settings ADD COLUMN kick_threshold INTEGER DEFAULT 3`); } catch {}
+try { db.exec(`ALTER TABLE guild_settings ADD COLUMN raid_point_value INTEGER DEFAULT 1`); } catch {}
+try { db.exec(`ALTER TABLE guild_settings ADD COLUMN flagged_logs_channel_id TEXT`); } catch {}
 try { db.exec(`ALTER TABLE tickets ADD COLUMN last_activity_at TEXT`); } catch {}
 
 // Seed the hardcoded owner + any env-configured whitelist users
@@ -119,36 +134,66 @@ export const statements = {
     VALUES (@discord_id, @roblox_username, @roblox_user_id)
     ON CONFLICT(discord_id) DO UPDATE SET
       roblox_username = excluded.roblox_username,
-      roblox_user_id = excluded.roblox_user_id
+      roblox_user_id  = excluded.roblox_user_id
   `),
-  allUsers: db.prepare(`SELECT * FROM users ORDER BY promo_points DESC, raids_attended DESC`),
+  allUsers: db.prepare(`SELECT * FROM users ORDER BY promo_points DESC`),
   addPromoPoints: db.prepare(`UPDATE users SET promo_points = promo_points + ? WHERE discord_id = ?`),
+  setPromoPoints: db.prepare(`UPDATE users SET promo_points = ? WHERE discord_id = ?`),
   incrementAttended: db.prepare(`UPDATE users SET raids_attended = raids_attended + 1 WHERE discord_id = ?`),
   incrementMissed: db.prepare(`UPDATE users SET missed_raids = missed_raids + 1 WHERE discord_id = ?`),
   resetMissed: db.prepare(`UPDATE users SET missed_raids = 0 WHERE discord_id = ?`),
 
   // Promo roles
-  upsertPromoRole: db.prepare(`INSERT INTO promo_roles (points, role_id) VALUES (?, ?) ON CONFLICT(points) DO UPDATE SET role_id = excluded.role_id`),
+  upsertPromoRole: db.prepare(`INSERT OR REPLACE INTO promo_roles (points, role_id) VALUES (?, ?)`),
   removePromoRole: db.prepare(`DELETE FROM promo_roles WHERE points = ?`),
   allPromoRoles: db.prepare(`SELECT * FROM promo_roles ORDER BY points ASC`),
 
   // Guild settings
   getGuildSettings: db.prepare(`SELECT * FROM guild_settings WHERE guild_id = ?`),
-  upsertMissedMessageId: db.prepare(`INSERT INTO guild_settings (guild_id, missed_message_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET missed_message_id = excluded.missed_message_id`),
-  upsertLogChannel: db.prepare(`INSERT INTO guild_settings (guild_id, log_channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET log_channel_id = excluded.log_channel_id`),
-  upsertMissedChannel: db.prepare(`INSERT INTO guild_settings (guild_id, missed_channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET missed_channel_id = excluded.missed_channel_id`),
-  upsertGateChannel: db.prepare(`INSERT INTO guild_settings (guild_id, gate_channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET gate_channel_id = excluded.gate_channel_id`),
-  upsertTranscriptChannel: db.prepare(`INSERT INTO guild_settings (guild_id, transcript_channel_id) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET transcript_channel_id = excluded.transcript_channel_id`),
-  upsertKickThreshold: db.prepare(`INSERT INTO guild_settings (guild_id, kick_threshold) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET kick_threshold = excluded.kick_threshold`),
+  upsertLogChannel: db.prepare(`
+    INSERT INTO guild_settings (guild_id, log_channel_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET log_channel_id = excluded.log_channel_id
+  `),
+  upsertMissedChannel: db.prepare(`
+    INSERT INTO guild_settings (guild_id, missed_channel_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET missed_channel_id = excluded.missed_channel_id
+  `),
+  upsertGateChannel: db.prepare(`
+    INSERT INTO guild_settings (guild_id, gate_channel_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET gate_channel_id = excluded.gate_channel_id
+  `),
+  upsertTranscriptChannel: db.prepare(`
+    INSERT INTO guild_settings (guild_id, transcript_channel_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET transcript_channel_id = excluded.transcript_channel_id
+  `),
+  upsertMissedMessageId: db.prepare(`
+    INSERT INTO guild_settings (guild_id, missed_message_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET missed_message_id = excluded.missed_message_id
+  `),
+  upsertKickThreshold: db.prepare(`
+    INSERT INTO guild_settings (guild_id, kick_threshold) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET kick_threshold = excluded.kick_threshold
+  `),
+  upsertRaidPointValue: db.prepare(`
+    INSERT INTO guild_settings (guild_id, raid_point_value) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET raid_point_value = excluded.raid_point_value
+  `),
+  upsertFlaggedLogsChannel: db.prepare(`
+    INSERT INTO guild_settings (guild_id, flagged_logs_channel_id) VALUES (?, ?)
+    ON CONFLICT(guild_id) DO UPDATE SET flagged_logs_channel_id = excluded.flagged_logs_channel_id
+  `),
 
   // Whitelist
-  isWhitelisted: db.prepare(`SELECT 1 FROM whitelist WHERE discord_id = ?`),
   addWhitelist: db.prepare(`INSERT OR IGNORE INTO whitelist (discord_id, added_by) VALUES (?, ?)`),
   removeWhitelist: db.prepare(`DELETE FROM whitelist WHERE discord_id = ?`),
   allWhitelist: db.prepare(`SELECT * FROM whitelist`),
+  isWhitelisted: db.prepare(`SELECT 1 FROM whitelist WHERE discord_id = ?`),
 
   // Raid scans
-  insertRaidScan: db.prepare(`INSERT INTO raid_scans (guild_id, created_by, video_name, detected_json, absent_json) VALUES (@guild_id, @created_by, @video_name, @detected_json, @absent_json)`),
+  insertRaidScan: db.prepare(`
+    INSERT INTO raid_scans (guild_id, created_by, video_name, detected_json, absent_json)
+    VALUES (@guild_id, @created_by, @video_name, @detected_json, @absent_json)
+  `),
   getRaidScan: db.prepare(`SELECT * FROM raid_scans WHERE id = ?`),
   updateRaidScanStatus: db.prepare(`UPDATE raid_scans SET status = ? WHERE id = ?`),
   updateRaidScanDetected: db.prepare(`UPDATE raid_scans SET detected_json = ?, absent_json = ? WHERE id = ?`),
@@ -156,12 +201,16 @@ export const statements = {
   recentRaidScans: db.prepare(`SELECT * FROM raid_scans WHERE guild_id = ? ORDER BY created_at DESC LIMIT 10`),
 
   // Tickets
-  insertTicket: db.prepare(`INSERT INTO tickets (channel_id, guild_id, user_id, answers_json) VALUES (@channel_id, @guild_id, @user_id, @answers_json)`),
+  insertTicket: db.prepare(`
+    INSERT OR IGNORE INTO tickets (channel_id, guild_id, user_id, answers_json)
+    VALUES (@channel_id, @guild_id, @user_id, @answers_json)
+  `),
   getTicket: db.prepare(`SELECT * FROM tickets WHERE channel_id = ?`),
-  getOpenTicketByUser: db.prepare(`SELECT * FROM tickets WHERE user_id = ? AND guild_id = ? AND status = 'open' ORDER BY created_at DESC LIMIT 1`),
+  getOpenTicketByUser: db.prepare(`SELECT * FROM tickets WHERE user_id = ? AND guild_id = ? AND status = 'open' LIMIT 1`),
+  getOpenTickets: db.prepare(`SELECT * FROM tickets WHERE status = 'open' ORDER BY created_at ASC`),
   closeTicket: db.prepare(`UPDATE tickets SET status = 'closed' WHERE channel_id = ?`),
   markTicketVerified: db.prepare(`UPDATE tickets SET status = 'verified' WHERE channel_id = ?`),
-  getOpenTickets: db.prepare(`SELECT * FROM tickets WHERE status = 'open' ORDER BY created_at ASC`),
+  allTickets: db.prepare(`SELECT * FROM tickets WHERE guild_id = ? ORDER BY created_at DESC`),
   touchTicketActivity: db.prepare(`UPDATE tickets SET last_activity_at = datetime('now') WHERE channel_id = ?`),
 
   // Vetting lists
@@ -185,6 +234,19 @@ export const statements = {
   removeLoa: db.prepare(`DELETE FROM loa_entries WHERE discord_id = ? AND guild_id = ?`),
   getLoa: db.prepare(`SELECT * FROM loa_entries WHERE discord_id = ? AND guild_id = ?`),
   listLoas: db.prepare(`SELECT * FROM loa_entries WHERE guild_id = ? ORDER BY added_at DESC`),
+
+  // Flagged enforcement logs
+  insertFlaggedLog: db.prepare(`
+    INSERT INTO flagged_enforcement_logs (guild_id, discord_id, roblox_username, missed_raids, threshold, scan_id)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  listFlaggedLogs: db.prepare(`
+    SELECT * FROM flagged_enforcement_logs WHERE guild_id = ? ORDER BY logged_at DESC LIMIT 25
+  `),
+  deleteFlaggedLogs: db.prepare(`DELETE FROM flagged_enforcement_logs WHERE discord_id = ?`),
+
+  // Bulk operations
+  resetAllMissed: db.prepare(`UPDATE users SET missed_raids = 0`),
 
   // Backup
   backupUsers: db.prepare(`SELECT * FROM users`),

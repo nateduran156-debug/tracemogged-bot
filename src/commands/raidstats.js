@@ -33,10 +33,23 @@ export const setKickThresholdData = new SlashCommandBuilder()
       .setRequired(true)
   );
 
+export const setPointValueData = new SlashCommandBuilder()
+  .setName('setpointvalue')
+  .setDescription('Set how many promo points each raid attendance is worth')
+  .addIntegerOption((o) =>
+    o.setName('points')
+      .setDescription('Points awarded per raid attended (e.g. 2)')
+      .setMinValue(1)
+      .setMaxValue(100)
+      .setRequired(true)
+  );
+
 export function buildRaidStatsPayload(guildId) {
   const allScans = statements.allRaidScans.all(guildId);
   const approved = allScans.filter((s) => s.status === 'approved');
   const pending = allScans.filter((s) => s.status === 'pending');
+  const settings = statements.getGuildSettings.get(guildId);
+  const pointValue = settings?.raid_point_value ?? 1;
 
   let totalAttended = 0;
   let totalAbsent = 0;
@@ -59,6 +72,7 @@ export function buildRaidStatsPayload(guildId) {
     `**Total Absences Logged:** ${totalAbsent}`,
     `**Avg Attendance Per Raid:** ${avgAttendance}`,
     `**Registered Members:** ${allUsers.length}`,
+    `**Points Per Raid:** ${pointValue}`,
     '',
     '**Top 3 Members:**',
     ...top3.map((u, i) => `${i + 1}. ${u.roblox_username} — ${u.promo_points} pts, ${u.raids_attended} raids`),
@@ -127,6 +141,20 @@ export function buildSetKickThresholdPayload(guildId, threshold, setBy) {
       lines: [
         `Members will be warned when they reach **${threshold - 1}** missed raids.`,
         `Members with **${threshold}+** missed raids are flagged for removal.`,
+        `Set by: <@${setBy}>`,
+      ],
+    })
+  );
+}
+
+export function buildSetPointValuePayload(guildId, points, setBy) {
+  statements.upsertRaidPointValue.run(guildId, points);
+  return componentsV2Payload(
+    buildContainer({
+      accentColor: Colors.success,
+      heading: 'Raid Point Value Set',
+      lines: [
+        `Each raid attendance is now worth **${points}** promo point${points !== 1 ? 's' : ''}.`,
         `Set by: <@${setBy}>`,
       ],
     })

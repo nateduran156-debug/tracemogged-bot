@@ -3,8 +3,9 @@ import { statements } from '../db.js';
 import {
   register, raidscan, raidmanual, raidticket, raidstart, raidstats, loa,
   promorole, channels, activity, profile, whitelistCmd, ticketpanel,
-  verify, vetting, boostprotect, backup, lookup,
+  verify, vetting, boostprotect, backup, lookup, flaggedlogs, memberops,
 } from '../commandRegistry.js';
+import { RAIDRESET_CONFIRM_ID, RAIDRESET_CANCEL_ID } from '../commands/memberops.js';
 import { config } from '../config.js';
 import {
   TICKET_OPEN_BUTTON_ID, TICKET_MODAL_ID,
@@ -17,13 +18,22 @@ import { RAID_TICKET_PANEL_BUTTON_ID, RAID_TICKET_MODAL_ID } from '../commands/r
 import { KICK_CONFIRM_ID, KICK_CANCEL_ID, kickNonReactors } from '../commands/activity.js';
 import { applyPromoRoles } from '../services/promo.js';
 import { buildContainer, componentsV2Payload, Colors } from '../components.js';
-import { refreshMissedChannel, setGateChannel, getGateChannelId, setTranscriptChannel } from '../commands/channels.js';
+import {
+  refreshMissedChannel, setGateChannel, getGateChannelId, setTranscriptChannel,
+  setFlaggedLogsChannel, getFlaggedLogsChannelId,
+} from '../commands/channels.js';
 import { pendingKicks } from '../pendingKicks.js';
 import { pendingAwards } from '../pendingAwards.js';
 
 function denyMessage() {
   return componentsV2Payload(
     buildContainer({ accentColor: Colors.danger, heading: 'Access Denied', lines: ['You are not whitelisted to use this bot.'] })
+  );
+}
+
+function usageMessage(heading, lines) {
+  return componentsV2Payload(
+    buildContainer({ accentColor: Colors.neutral, heading, lines })
   );
 }
 
@@ -35,6 +45,40 @@ async function dmMissedWarning(guild, discordId, missed, threshold) {
       `heads up — you've missed **${missed}** raid${missed !== 1 ? 's' : ''} and the limit is **${threshold}**.\nyou're 1 away from being flagged for removal. make sure to attend the next one.`
     ).catch(() => {});
   } catch {}
+}
+
+async function dmFlaggedEnforcement(guild, discordId, missed, threshold) {
+  try {
+    const member = await guild.members.fetch(discordId).catch(() => null);
+    if (!member) return;
+    await member.send(
+      `you've been flagged by auto enforcement.\n\nyou've missed **${missed}** raid${missed !== 1 ? 's' : ''} — the threshold is **${threshold}**.\n\nstaff have been notified. reach out if this is a mistake.`
+    ).catch(() => {});
+  } catch {}
+}
+
+async function postFlaggedEnforcementLog(guild, guildId, flaggedUsers, scanId) {
+  const logsChannelId = getFlaggedLogsChannelId(guildId);
+  if (!logsChannelId) return;
+
+  const logChannel = await guild.channels.fetch(logsChannelId).catch(() => null);
+  if (!logChannel) return;
+
+  const lines = [
+    `**Scan:** #${scanId}`,
+    `**Flagged members (${flaggedUsers.length}):**`,
+    ...flaggedUsers.map((u) => `— <@${u.discord_id}> (${u.roblox_username}) · missed **${u.missed_raids}** raids`),
+  ];
+
+  await logChannel.send(
+    componentsV2Payload(
+      buildContainer({
+        accentColor: Colors.danger,
+        heading: 'Auto Enforcement — Flagged Players',
+        lines,
+      })
+    )
+  ).catch(() => {});
 }
 
 export default function registerInteractionHandler(client) {
@@ -85,9 +129,12 @@ async function handleSlashCommand(interaction) {
     await interaction.deferReply();
     const attachment = interaction.options.getAttachment('video', true);
     await raidscan.runRaidScan({
-      guildId: interaction.guildId, createdBy: interaction.user.id,
-      videoUrl: attachment.url, videoName: attachment.name,
-      reply: (p) => interaction.editReply(p), editReply: (p) => interaction.editReply(p),
+      guildId: interaction.guildId,
+      createdBy: interaction.user.id,
+      videoUrl: attachment.url,
+      videoName: attachment.name,
+      reply: (p) => interaction.editReply(p),
+      editReply: (p) => interaction.editReply(p),
     });
     return;
   }
@@ -96,8 +143,11 @@ async function handleSlashCommand(interaction) {
     await interaction.deferReply();
     const groupId = interaction.options.getInteger('group_id', true);
     await raidscan.runGroupScan({
-      guildId: interaction.guildId, createdBy: interaction.user.id, groupId,
-      reply: (p) => interaction.editReply(p), editReply: (p) => interaction.editReply(p),
+      guildId: interaction.guildId,
+      createdBy: interaction.user.id,
+      groupId,
+      reply: (p) => interaction.editReply(p),
+      editReply: (p) => interaction.editReply(p),
     });
     return;
   }
@@ -157,6 +207,28 @@ async function handleSlashCommand(interaction) {
   if (name === 'setkickthreshold') {
     const threshold = interaction.options.getInteger('threshold', true);
     await interaction.reply(raidstats.buildSetKickThresholdPayload(interaction.guildId, threshold, interaction.user.id));
+    return;
+  }
+
+  if (name === 'setpointvalue') {
+    const points = interaction.options.getInteger('points', true);
+    await interaction.reply(raidstats.buildSetPointValuePayload(interaction.guildId, points, interaction.user.id));
+    return;
+  }
+
+  if (name === 'flagged-player-logs') {
+    await interaction.reply(flaggedlogs.buildFlaggedPlayerLogsPayload(interaction.guildId));
+    return;
+  }
+
+  if (name === 'setflaggedlogschannel') {
+    const channel = interaction.options.getChannel('channel', true);
+    setFlaggedLogsChannel(interaction.guildId, channel.id);
+    await interaction.reply(componentsV2Payload(buildContainer({
+      accentColor: Colors.success,
+      heading: 'Flagged Logs Channel Set',
+      lines: [`Auto enforcement flags will be posted to <#${channel.id}>.`],
+    })));
     return;
   }
 
@@ -307,29 +379,33 @@ async function handleSlashCommand(interaction) {
   if (name === 'boostprotect') {
     const sub = interaction.options.getSubcommand();
     const role = interaction.options.getRole('role', false);
-    if (sub === 'add') await interaction.reply(boostprotect.addProtectedRole(interaction.guildId, role.id, interaction.user.id));
-    else if (sub === 'remove') await interaction.reply(boostprotect.removeProtectedRole(interaction.guildId, role.id));
-    else await interaction.reply(boostprotect.listProtectedRoles(interaction.guildId));
-    return;
-  }
-
-  if (name === 'lookup') {
-    await interaction.reply(lookup.runLookup(interaction.options.getString('username', true)));
+    if (sub === 'add' && role) {
+      await interaction.reply(boostprotect.handleAdd(interaction.guildId, role.id, interaction.user.id));
+    } else if (sub === 'remove' && role) {
+      await interaction.reply(boostprotect.handleRemove(interaction.guildId, role.id));
+    } else {
+      await interaction.reply(boostprotect.handleList(interaction.guildId));
+    }
     return;
   }
 
   if (name === 'backup') {
-    const tmpPath = backup.runBackup();
-    await interaction.reply(backup.backupPayload(tmpPath));
+    await interaction.deferReply({ ephemeral: true });
+    await interaction.editReply(await backup.buildBackupPayload());
     return;
   }
 
   if (name === 'restore') {
-    await interaction.deferReply();
+    await interaction.deferReply({ ephemeral: true });
     const attachment = interaction.options.getAttachment('file', true);
-    const result = await backup.downloadAndRestore(attachment.url);
-    if (!result.ok) await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.danger, heading: 'Restore Failed', lines: [result.reason] })));
-    else await interaction.editReply(backup.restoreSuccessPayload(result.counts));
+    await interaction.editReply(await backup.buildRestorePayload(attachment.url));
+    return;
+  }
+
+  if (name === 'lookup') {
+    await interaction.deferReply();
+    const username = interaction.options.getString('username', true);
+    await interaction.editReply(await lookup.runLookup(username));
     return;
   }
 
@@ -339,36 +415,107 @@ async function handleSlashCommand(interaction) {
     await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Ticket Panel Posted', lines: [`Posted in <#${channel.id}>.`] })), ephemeral: true });
     return;
   }
+
+  if (name === 'attendance') {
+    const user = interaction.options.getUser('member', true);
+    await interaction.reply(memberops.buildAttendancePayload(user.id, interaction.guildId));
+    return;
+  }
+
+  if (name === 'resetmissed') {
+    const user = interaction.options.getUser('member', true);
+    const payload = memberops.buildResetMissedPayload(user.id, interaction.user.id);
+    await interaction.reply(payload);
+    await refreshMissedChannel(interaction.guild).catch(() => {});
+    return;
+  }
+
+  if (name === 'unflag') {
+    const user = interaction.options.getUser('member', true);
+    const { payload, dmTarget } = memberops.buildUnflagPayload(user.id, interaction.user.id);
+    await interaction.reply(payload);
+    await refreshMissedChannel(interaction.guild).catch(() => {});
+    if (dmTarget) {
+      const member = await interaction.guild.members.fetch(dmTarget).catch(() => null);
+      if (member) {
+        await member.send(
+          `you've been unflagged by staff.\n\nyour missed raid count has been cleared — you're starting fresh.`
+        ).catch(() => {});
+      }
+    }
+    return;
+  }
+
+  if (name === 'demote') {
+    const user = interaction.options.getUser('member', true);
+    await interaction.deferReply();
+    await interaction.editReply(await memberops.buildDemotePayload(interaction.guild, user.id, interaction.user.id));
+    return;
+  }
+
+  if (name === 'raidreset') {
+    await interaction.reply(memberops.buildRaidResetConfirmPayload(interaction.user.id));
+    return;
+  }
+
+  if (name === 'exportall') {
+    await interaction.reply(memberops.buildExportAllPayload());
+    return;
+  }
 }
 
 async function handleButton(interaction) {
   const [action, arg] = interaction.customId.split(':');
 
-  // Raid ticket panel button — anyone can open
-  if (action === RAID_TICKET_PANEL_BUTTON_ID) {
-    const existing = statements.getOpenRaidTicketByUser.get(interaction.user.id, interaction.guildId);
-    if (existing) {
-      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Ticket Already Open', lines: [`You already have an open raid ticket at <#${existing.channel_id}>.`] })), ephemeral: true });
-      return;
-    }
-    const { buildRaidTicketModal } = await import('../commands/raidticket.js');
-    await interaction.showModal(buildRaidTicketModal());
-    return;
-  }
-
-  // Verification ticket button — anyone can open
+  // Ticket panel open button — no whitelist check needed
   if (action === TICKET_OPEN_BUTTON_ID) {
     await interaction.showModal(buildVerificationModal());
     return;
   }
 
-  // Award panel buttons
-  if (['award_minus', 'award_plus', 'award_yes', 'award_no'].includes(action)) {
+  // Raid ticket panel button
+  if (action === RAID_TICKET_PANEL_BUTTON_ID) {
+    const user = statements.getUser.get(interaction.user.id);
+    if (!user) {
+      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Not Registered', lines: ['Run `.register (username)` before submitting a raid ticket.'] })), ephemeral: true });
+      return;
+    }
+    const existing = statements.getOpenRaidTicketByUser.get(interaction.user.id, interaction.guildId);
+    if (existing) {
+      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Ticket Already Open', lines: [`You already have a raid ticket open: <#${existing.channel_id}>.`] })), ephemeral: true });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    const { buildRaidTicketModal } = await import('../commands/raidticket.js');
+    await interaction.followUp({ ...componentsV2Payload(buildContainer({ accentColor: Colors.info, heading: 'Creating Ticket', lines: ['Setting up your raid ticket channel...'] })), ephemeral: true });
+
+    const robloxUsername = user.roblox_username;
+    const channel = await createRaidTicketChannel(interaction.guild, interaction.member, robloxUsername);
+    statements.insertRaidTicketChannel.run(channel.id, interaction.guildId, interaction.user.id, robloxUsername);
+
+    await channel.send(componentsV2Payload(buildContainer({
+      accentColor: Colors.info,
+      heading: 'Raid Ticket',
+      lines: [
+        `<@${interaction.user.id}> — this is your raid proof ticket.`,
+        `**Roblox:** ${robloxUsername}`,
+        '',
+        'Send your proof in this channel and staff will review it.',
+      ],
+    }))).catch(() => {});
+
+    await channel.send({ content: `<@${config.hardcodedWhitelistId}> — raid ticket from <@${interaction.user.id}> (${robloxUsername})` }).catch(() => {});
+    await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Ticket Created', lines: [`Your raid ticket: <#${channel.id}>`] })));
+    return;
+  }
+
+  // Award panel buttons (proof in raid ticket channels)
+  if (action.startsWith('award_')) {
     const proofMessageId = arg;
     const award = pendingAwards.get(proofMessageId);
-
     if (!award) {
-      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Expired', lines: ['This award panel has expired or was already processed.'] })), ephemeral: true });
+      await interaction.update(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Expired', lines: ['This award panel has expired.'] }))).catch(() => {});
       return;
     }
 
@@ -438,13 +585,15 @@ async function handleButton(interaction) {
     const allUsers = statements.allUsers.all();
     const settings = statements.getGuildSettings.get(interaction.guildId);
     const threshold = settings?.kick_threshold ?? 3;
+    const pointValue = settings?.raid_point_value ?? 1;
 
     const attendedIds = [];
     const promotionLines = [];
+    const nowFlagged = [];
 
     for (const user of allUsers) {
       if (detectedLower.includes(user.roblox_username.toLowerCase())) {
-        statements.addPromoPoints.run(1, user.discord_id);
+        statements.addPromoPoints.run(pointValue, user.discord_id);
         statements.incrementAttended.run(user.discord_id);
         statements.resetMissed.run(user.discord_id);
         const granted = await applyPromoRoles(interaction.guild, user.discord_id);
@@ -454,20 +603,36 @@ async function handleButton(interaction) {
     }
 
     for (const id of absentIds) {
-      // Skip increment if user is on LOA
       const onLoa = statements.getLoa.get(id, interaction.guildId);
       if (onLoa) continue;
 
       statements.incrementMissed.run(id);
-
-      // DM warning if 1 raid away from threshold
       const updated = statements.getUser.get(id);
-      if (updated && updated.missed_raids === threshold - 1) {
+      if (!updated) continue;
+
+      if (updated.missed_raids === threshold - 1) {
+        // One away — send a warning DM
         await dmMissedWarning(interaction.guild, id, updated.missed_raids, threshold);
+      } else if (updated.missed_raids >= threshold) {
+        // At or over threshold — enforcement DM + log
+        await dmFlaggedEnforcement(interaction.guild, id, updated.missed_raids, threshold);
+        statements.insertFlaggedLog.run(
+          interaction.guildId,
+          id,
+          updated.roblox_username,
+          updated.missed_raids,
+          threshold,
+          scanId
+        );
+        nowFlagged.push(updated);
       }
     }
 
     await refreshMissedChannel(interaction.guild);
+
+    if (nowFlagged.length > 0) {
+      await postFlaggedEnforcementLog(interaction.guild, interaction.guildId, nowFlagged, scanId);
+    }
 
     if (settings?.log_channel_id) {
       const logChannel = await interaction.guild.channels.fetch(settings.log_channel_id).catch(() => null);
@@ -476,12 +641,25 @@ async function handleButton(interaction) {
           ? `Attendees: ${attendedIds.map((id) => `<@${id}>`).join(' ')}`
           : 'Attendees: none';
         await logChannel.send({ content: pingText });
-        const summaryLines = [`Attendees: ${attendedIds.length}`, `Absent/missed: ${absentIds.length}`, ...(promotionLines.length ? ['', ...promotionLines] : [])];
+        const summaryLines = [
+          `Attendees: ${attendedIds.length}`,
+          `Absent/missed: ${absentIds.length}`,
+          `Points awarded per attendee: ${pointValue}`,
+          ...(promotionLines.length ? ['', ...promotionLines] : []),
+          ...(nowFlagged.length ? ['', `Auto enforcement flagged: ${nowFlagged.length} member${nowFlagged.length !== 1 ? 's' : ''}`] : []),
+        ];
         await logChannel.send(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: `Raid Scan #${scanId} Approved`, lines: summaryLines })));
       }
     }
 
-    await interaction.reply(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Attendance Approved', lines: ['Points and raid counts have been updated.'] })));
+    await interaction.reply(componentsV2Payload(buildContainer({
+      accentColor: Colors.success,
+      heading: 'Attendance Approved',
+      lines: [
+        'Points and raid counts have been updated.',
+        ...(nowFlagged.length ? [`Auto enforcement flagged **${nowFlagged.length}** member${nowFlagged.length !== 1 ? 's' : ''} — check <#${getFlaggedLogsChannelId(interaction.guildId) ?? '?'}> for details.`] : []),
+      ],
+    })));
     return;
   }
 
@@ -502,58 +680,56 @@ async function handleButton(interaction) {
   }
 
   if (action === KICK_CONFIRM_ID) {
-    const pending = pendingKicks.get(interaction.channelId);
-    if (!pending) { await interaction.reply({ content: 'This confirmation has expired.', ephemeral: true }); return; }
+    await interaction.deferReply();
+    const pendingKickData = pendingKicks.get(interaction.channelId);
+    if (!pendingKickData) {
+      await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Expired', lines: ['No pending kick action found.'] })));
+      return;
+    }
     pendingKicks.delete(interaction.channelId);
-    await interaction.deferUpdate();
-    const { kicked, skipped } = await kickNonReactors({ guild: interaction.guild, missing: pending.missing, reason: pending.reason, protectedRoleIds: pending.protectedRoleIds ?? [] });
-    await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Kick Complete', lines: [`Kicked: ${kicked}`, `Skipped (protected/unkickable): ${skipped}`] })));
+    const { kicked, skipped } = await kickNonReactors(interaction.guild, pendingKickData.missing, pendingKickData.reason, pendingKickData.protectedRoleIds);
+    await interaction.editReply(componentsV2Payload(buildContainer({
+      accentColor: Colors.success,
+      heading: 'Kick Complete',
+      lines: [`Kicked: ${kicked}`, `Skipped (protected): ${skipped}`],
+    })));
     return;
   }
 
   if (action === KICK_CANCEL_ID) {
     pendingKicks.delete(interaction.channelId);
-    await interaction.update(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Kick Cancelled', lines: ['No members were kicked.'] })));
+    await interaction.update(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Kick Cancelled', lines: ['No action taken.'] })));
+    return;
+  }
+
+  if (action === RAIDRESET_CONFIRM_ID) {
+    if (!isWhitelisted(interaction.user.id)) {
+      await interaction.reply({ ...denyMessage(), ephemeral: true });
+      return;
+    }
+    const resultPayload = memberops.executeRaidReset(interaction.user.id);
+    await interaction.update(resultPayload);
+    await refreshMissedChannel(interaction.guild).catch(() => {});
+    return;
+  }
+
+  if (action === RAIDRESET_CANCEL_ID) {
+    await interaction.update(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Reset Cancelled', lines: ['No action taken.'] })));
     return;
   }
 }
 
 async function handleModal(interaction) {
-  // Manual raid modal
   if (interaction.customId === RAID_MANUAL_MODAL_ID) {
-    if (!isWhitelisted(interaction.user.id)) { await interaction.reply({ ...denyMessage(), ephemeral: true }); return; }
+    await interaction.deferReply();
     const attendedRaw = interaction.fields.getTextInputValue('attended') || '';
     const absentRaw = interaction.fields.getTextInputValue('absent') || '';
-    await interaction.deferReply();
     await processManualModal({ guildId: interaction.guildId, createdBy: interaction.user.id, attendedRaw, absentRaw, reply: (p) => interaction.editReply(p) });
     return;
   }
 
-  // Raid ticket modal
   if (interaction.customId === RAID_TICKET_MODAL_ID) {
-    const robloxUsername = interaction.fields.getTextInputValue('roblox_user').trim();
-    const existingTicket = statements.getOpenRaidTicketByUser.get(interaction.user.id, interaction.guildId);
-    if (existingTicket) {
-      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Ticket Already Open', lines: [`You already have an open raid ticket at <#${existingTicket.channel_id}>.`] })), ephemeral: true });
-      return;
-    }
-    await interaction.deferReply({ ephemeral: true });
-    const channel = await createRaidTicketChannel(interaction.guild, interaction.member, robloxUsername);
-    statements.insertRaidTicketChannel.run(channel.id, interaction.guildId, interaction.user.id, robloxUsername);
-
-    await channel.send(componentsV2Payload(buildContainer({
-      accentColor: Colors.info,
-      heading: 'Raid Ticket',
-      lines: [
-        `<@${interaction.user.id}> — thanks for opening a raid ticket.`,
-        `**Roblox Username:** ${robloxUsername}`,
-        '',
-        'Send your proof in this channel and staff will review it.',
-      ],
-    }))).catch(() => {});
-
-    await channel.send({ content: `<@${config.hardcodedWhitelistId}> — raid ticket from <@${interaction.user.id}> (${robloxUsername})` }).catch(() => {});
-    await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Ticket Created', lines: [`Your raid ticket: <#${channel.id}>`] })));
+    // handled by raidticket panel button above for now
     return;
   }
 

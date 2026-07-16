@@ -2,7 +2,12 @@
 nixPkgs = ["nodejs_22", "ffmpeg"]
 
 [phases.install]
-cmds = ["npm install"]
+cmds = ["npm install --omit=dev"]
 
 [start]
-cmd = "node src/index.js"
+cmd = "node --experimental-sqlite src/index.js"
+
+[variables]
+NODE_ENV = "production"
+DATABASE_PATH = "/data/bot.sqlite3"
+REPORT_DIR = "/data/reports"

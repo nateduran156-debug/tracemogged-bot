@@ -4,7 +4,9 @@ import os from 'node:os';
 import ffmpeg from 'fluent-ffmpeg';
 import { createWorker } from 'tesseract.js';
 
-ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
+// fluent-ffmpeg locates the ffmpeg binary from PATH automatically.
+// Do not hardcode the path — it differs between Alpine Docker (/usr/bin/ffmpeg)
+// and Nix-based environments used by Railway's nixpacks builder.
 
 function extractFrames(videoPath, framesDir, fps = 2) {
   return new Promise((resolve, reject) => {

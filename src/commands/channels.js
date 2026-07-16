@@ -75,6 +75,15 @@ export function getTranscriptChannelId(guildId) {
   return settings?.transcript_channel_id || null;
 }
 
+export function setFlaggedLogsChannel(guildId, channelId) {
+  statements.upsertFlaggedLogsChannel.run(guildId, channelId);
+}
+
+export function getFlaggedLogsChannelId(guildId) {
+  const settings = statements.getGuildSettings.get(guildId);
+  return settings?.flagged_logs_channel_id || null;
+}
+
 export async function refreshMissedChannel(guild) {
   const settings = statements.getGuildSettings.get(guild.id);
   if (!settings?.missed_channel_id) return;
@@ -96,7 +105,6 @@ export async function refreshMissedChannel(guild) {
     })
   );
 
-  // Try to edit the existing pinned message instead of spamming a new one.
   if (settings.missed_message_id) {
     const existing = await channel.messages.fetch(settings.missed_message_id).catch(() => null);
     if (existing) {
@@ -105,7 +113,6 @@ export async function refreshMissedChannel(guild) {
     }
   }
 
-  // No existing message — send a fresh one and save its ID.
   const sent = await channel.send(payload);
   statements.upsertMissedMessageId.run(guild.id, sent.id);
 }

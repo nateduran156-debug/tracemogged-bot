@@ -5,9 +5,9 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node src/index.js",
-    "deploy-commands": "node src/deploy-commands.js"
+    "start": "node --experimental-sqlite src/index.js",
+    "dev": "node --experimental-sqlite src/index.js",
+    "deploy-commands": "node --experimental-sqlite src/deploy-commands.js"
   },
   "license": "MIT",
   "engines": {
