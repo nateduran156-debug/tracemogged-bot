@@ -326,6 +326,7 @@ export default function registerMessageHandler(client) {
           }
           channels.setMissedChannel(message.guildId, channel.id);
           await message.reply(componentsV2Payload(buildContainer({ accentColor: Colors.success, heading: 'Missed Raids Channel Set', lines: [`Set to <#${channel.id}>.`] })));
+          await channels.refreshMissedChannel(message.guild).catch(() => {});
           break;
         }
 

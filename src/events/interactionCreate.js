@@ -328,10 +328,13 @@ async function handleSlashCommand(interaction) {
 
   if (name === 'whitelist') {
     const sub = interaction.options.getSubcommand();
-    const user = interaction.options.getUser('user', true);
-    if (sub === 'add') await interaction.reply(whitelistCmd.handleWhitelistAdd(user.id, interaction.user.id));
-    else if (sub === 'remove') await interaction.reply(whitelistCmd.handleWhitelistRemove(user.id));
-    else await interaction.reply(whitelistCmd.handleWhitelistList());
+    if (sub === 'list') {
+      await interaction.reply(whitelistCmd.handleWhitelistList());
+    } else {
+      const user = interaction.options.getUser('user', true);
+      if (sub === 'add') await interaction.reply(whitelistCmd.handleWhitelistAdd(user.id, interaction.user.id));
+      else if (sub === 'remove') await interaction.reply(whitelistCmd.handleWhitelistRemove(user.id));
+    }
     return;
   }
 
@@ -487,8 +490,7 @@ async function handleButton(interaction) {
     }
 
     await interaction.deferReply({ ephemeral: true });
-    const { buildRaidTicketModal } = await import('../commands/raidticket.js');
-    await interaction.followUp({ ...componentsV2Payload(buildContainer({ accentColor: Colors.info, heading: 'Creating Ticket', lines: ['Setting up your raid ticket channel...'] })), ephemeral: true });
+    await interaction.editReply(componentsV2Payload(buildContainer({ accentColor: Colors.info, heading: 'Creating Ticket', lines: ['Setting up your raid ticket channel...'] })));
 
     const robloxUsername = user.roblox_username;
     const channel = await createRaidTicketChannel(interaction.guild, interaction.member, robloxUsername);
@@ -703,10 +705,6 @@ async function handleButton(interaction) {
   }
 
   if (action === RAIDRESET_CONFIRM_ID) {
-    if (!isWhitelisted(interaction.user.id)) {
-      await interaction.reply({ ...denyMessage(), ephemeral: true });
-      return;
-    }
     const resultPayload = memberops.executeRaidReset(interaction.user.id);
     await interaction.update(resultPayload);
     await refreshMissedChannel(interaction.guild).catch(() => {});
