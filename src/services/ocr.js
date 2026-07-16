@@ -4,24 +4,24 @@ import os from 'node:os';
 import ffmpeg from 'fluent-ffmpeg';
 import { createWorker } from 'tesseract.js';
 
-// use the system ffmpeg installed via the Dockerfile
 ffmpeg.setFfmpegPath('/usr/bin/ffmpeg');
 
-function extractFrames(videoPath, framesDir, fps = 1) {
+function extractFrames(videoPath, framesDir, fps = 2) {
   return new Promise((resolve, reject) => {
     fs.mkdirSync(framesDir, { recursive: true });
     ffmpeg(videoPath)
       .outputOptions([`-vf fps=${fps}`])
-      .output(path.join(framesDir, 'frame-%03d.png'))
+      .output(path.join(framesDir, 'frame-%04d.png'))
       .on('end', () => resolve())
       .on('error', (err) => reject(err))
       .run();
   });
 }
 
-// basic levenshtein distance — used to catch OCR misreads like l→1, O→0, etc.
 function levenshtein(a, b) {
   const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
   const dp = Array.from({ length: m + 1 }, (_, i) => [i]);
   for (let j = 1; j <= n; j++) dp[0][j] = j;
   for (let i = 1; i <= m; i++) {
@@ -34,18 +34,62 @@ function levenshtein(a, b) {
   return dp[m][n];
 }
 
-// checks if a username appears in the OCR word list, exact or within edit distance
-function matchUsername(username, ocrWords) {
+/**
+ * Match a single username against the set of extracted words/lines.
+ * Strategy (in order of cost):
+ *   1. Exact match (case-insensitive)
+ *   2. Substring — OCR word contains the full username
+ *   3. Substring — username contains the OCR word (partial visibility)
+ *   4. Levenshtein within tolerance
+ */
+function matchUsername(username, ocrWords, ocrLines) {
   const needle = username.toLowerCase();
-  // 1 typo allowed for short names, 2 for names 8+ chars
+  // tolerance: 1 typo for names < 8 chars, 2 for longer names
   const tolerance = needle.length >= 8 ? 2 : 1;
+
+  // Fast exact pass over deduplicated words
+  for (const raw of ocrWords) {
+    const word = raw.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!word) continue;
+    if (word === needle) return true;
+  }
+
+  // Substring pass — check each cleaned word
+  for (const raw of ocrWords) {
+    const word = raw.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if (!word || word.length < 3) continue;
+    // word contains username (e.g. "playerROBLOXNAME" or "ROBLOXNAME_tag")
+    if (word.includes(needle)) return true;
+    // username contains word (partial OCR read of longer name)
+    if (needle.length >= 5 && needle.includes(word) && word.length >= Math.ceil(needle.length * 0.6)) return true;
+  }
+
+  // Line-level pass — check raw OCR lines for embedded usernames
+  for (const line of ocrLines) {
+    const cleaned = line.toLowerCase().replace(/[^a-z0-9_ ]/g, '');
+    if (cleaned.includes(needle)) return true;
+  }
+
+  // Fuzzy levenshtein pass (most expensive — last)
   for (const raw of ocrWords) {
     const word = raw.toLowerCase().replace(/[^a-z0-9_]/g, '');
     if (!word || Math.abs(word.length - needle.length) > tolerance) continue;
-    if (word === needle) return true;
     if (levenshtein(needle, word) <= tolerance) return true;
   }
+
   return false;
+}
+
+/**
+ * OCR a single frame file with a pre-initialized worker.
+ * Returns { words: string[], lines: string[] }
+ */
+async function recognizeFrame(worker, framePath) {
+  const { data: { text } } = await worker.recognize(framePath);
+  if (!text || !text.trim()) return { words: [], lines: [] };
+  const lines = text.split('\n').filter((l) => l.trim().length > 0);
+  const words = text.trim().split(/\s+/);
+  return { words, lines };
 }
 
 export async function scanVideoForUsernames(videoPath, knownUsernames) {
@@ -53,39 +97,55 @@ export async function scanVideoForUsernames(videoPath, knownUsernames) {
   const framesDir = path.join(tmpDir, 'frames');
 
   try {
-    // 1 frame per second gives a lot more coverage than 0.5
-    await extractFrames(videoPath, framesDir, 1);
+    // 2 fps — double the coverage vs the original 1 fps
+    await extractFrames(videoPath, framesDir, 2);
 
     const frameFiles = fs
       .readdirSync(framesDir)
       .filter((f) => f.endsWith('.png'))
+      .sort()
       .map((f) => path.join(framesDir, f));
 
-    const worker = await createWorker('eng');
+    if (frameFiles.length === 0) return { detected: [], rawWords: [] };
 
-    // restrict tesseract to chars that can actually appear in Roblox usernames
-    // this cuts down on garbage characters and improves accuracy a lot
-    await worker.setParameters({
-      tessedit_char_whitelist: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
-    });
+    // Use up to 4 parallel workers for speed
+    const CONCURRENCY = Math.min(4, frameFiles.length);
+    const workers = await Promise.all(
+      Array.from({ length: CONCURRENCY }, async () => {
+        const w = await createWorker('eng');
+        // PSM 11 = sparse text, best for game HUDs with scattered names
+        await w.setParameters({
+          tessedit_pageseg_mode: '11',
+          tessedit_char_whitelist:
+            'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_',
+        });
+        return w;
+      })
+    );
 
     const allWords = [];
+    const allLines = [];
 
-    for (const frame of frameFiles) {
-      const { data: { text } } = await worker.recognize(frame);
-      if (text && text.trim()) {
-        const words = text.trim().split(/\s+/);
+    // Process frames in batches of CONCURRENCY
+    for (let i = 0; i < frameFiles.length; i += CONCURRENCY) {
+      const batch = frameFiles.slice(i, i + CONCURRENCY);
+      const results = await Promise.all(
+        batch.map((f, idx) => recognizeFrame(workers[idx % CONCURRENCY], f))
+      );
+      for (const { words, lines } of results) {
         allWords.push(...words);
+        allLines.push(...lines);
       }
     }
 
-    await worker.terminate();
+    await Promise.all(workers.map((w) => w.terminate()));
 
-    // deduplicate words so we're not doing redundant comparisons
-    const uniqueWords = [...new Set(allWords.map((w) => w.toLowerCase()))];
+    // Deduplicate for the expensive fuzzy pass
+    const uniqueWords = [...new Set(allWords.map((w) => w.toLowerCase().replace(/[^a-z0-9_]/g, '')).filter(Boolean))];
+    const uniqueLines = [...new Set(allLines.map((l) => l.toLowerCase()))];
 
     const detected = knownUsernames.filter((username) =>
-      matchUsername(username, uniqueWords)
+      matchUsername(username, uniqueWords, uniqueLines)
     );
 
     return { detected, rawWords: uniqueWords };

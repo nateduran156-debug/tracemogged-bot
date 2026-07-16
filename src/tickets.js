@@ -14,6 +14,7 @@ import {
   getUserGroups,
   getUserFriends,
 } from './services/roblox.js';
+import { RAID_TICKET_CATEGORY_ID } from './commands/raidticket.js';
 
 export const TICKET_OPEN_BUTTON_ID = 'ticket_open';
 export const TICKET_MODAL_ID = 'ticket_verification_modal';
@@ -124,6 +125,70 @@ export async function createTicketChannel(guild, member) {
   return channel;
 }
 
+/**
+ * Create a raid ticket channel in the raid ticket category.
+ */
+export async function createRaidTicketChannel(guild, member, robloxUsername) {
+  const overwrites = [
+    {
+      id: guild.roles.everyone.id,
+      deny: [PermissionFlagsBits.ViewChannel],
+    },
+    {
+      id: member.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ReadMessageHistory,
+        PermissionFlagsBits.AttachFiles,
+      ],
+    },
+    {
+      id: guild.members.me.id,
+      allow: [
+        PermissionFlagsBits.ViewChannel,
+        PermissionFlagsBits.SendMessages,
+        PermissionFlagsBits.ManageChannels,
+        PermissionFlagsBits.ReadMessageHistory,
+      ],
+    },
+  ];
+
+  const channelName = `raid-${member.user.username}`.slice(0, 100);
+  const channel = await guild.channels.create({
+    name: channelName,
+    type: ChannelType.GuildText,
+    parent: RAID_TICKET_CATEGORY_ID,
+    permissionOverwrites: overwrites,
+  });
+
+  return channel;
+}
+
+/**
+ * Build the award panel shown when a proof image is posted in a raid ticket channel.
+ */
+export function buildAwardPanel({ robloxUsername, targetDiscordId, amount, proofMessageId }) {
+  const userLabel = targetDiscordId ? `<@${targetDiscordId}>` : robloxUsername;
+  return componentsV2Payload(
+    buildContainer({
+      accentColor: Colors.info,
+      heading: 'Proof Submitted',
+      lines: [
+        `**Member:** ${userLabel}`,
+        `**Roblox:** ${robloxUsername}`,
+        `**Points to Award:** ${amount}`,
+      ],
+      buttons: [
+        button({ customId: `award_minus:${proofMessageId}`, label: '− 1', style: 2 }),
+        button({ customId: `award_plus:${proofMessageId}`, label: '+ 1', style: 2 }),
+        button({ customId: `award_yes:${proofMessageId}`, label: 'Award', style: 3 }),
+        button({ customId: `award_no:${proofMessageId}`, label: 'Dismiss', style: 4 }),
+      ],
+    }),
+  );
+}
+
 function fieldBlock(label, value) {
   return `**${label}**\n${value}`;
 }
@@ -135,7 +200,6 @@ export function buildTicketReviewPayload({ answers, verdict, ticketChannelId, ap
 
   const accentColor = !verdict.requiredGroupOk ? Colors.danger : Colors.black;
 
-  // Container 1 — application answers
   const answersContainer = buildContainer({
     accentColor,
     heading: '📝 Verification Application',
@@ -150,14 +214,12 @@ export function buildTicketReviewPayload({ answers, verdict, ticketChannelId, ap
     ],
   });
 
-  // Container 2 — automated checks
   const checksContainer = buildContainer({
     accentColor,
     heading: '🔍 Automated Checks',
     lines: ['```', ...verdict.lines, '', `Verdict: Subject Passed ${verdict.passed} / ${verdict.total} tests.`, '```'],
   });
 
-  // Container 3 — verdict / staff actions
   const verdictLines = [];
   if (applicantId) verdictLines.push(`Applicant: <@${applicantId}>`);
   if (ticketChannelId) verdictLines.push(`Ticket: <#${ticketChannelId}>`);
@@ -200,7 +262,6 @@ export async function runVerificationChecks(answers, member, guildId) {
 
   const displayName = member?.user?.username || answers.roblox_username;
 
-  // 1. Opponent crews (based on the applicant's free-text answer).
   lines.push(`[*] Checking if ${displayName} is in any opponent crews..`);
   const crewMatches = opponentCrews.filter((crew) =>
     answers.opposing_crews.toLowerCase().includes(crew.toLowerCase())
@@ -213,8 +274,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   }
   lines.push('');
 
-  // Look up the Roblox account once; if it doesn't exist, short-circuit the
-  // remaining Roblox-based checks.
   let robloxUser = null;
   let robloxGroups = [];
   let robloxFriends = [];
@@ -229,7 +288,6 @@ export async function runVerificationChecks(answers, member, guildId) {
     robloxLookupError = err.message;
   }
 
-  // 2. Opponent Roblox groups.
   lines.push(`[*] Checking if ${answers.roblox_username} is in any opponent Roblox groups..`);
   if (!robloxUser) {
     lines.push(`[-] Could not look up ${answers.roblox_username} on Roblox${robloxLookupError ? `: ${robloxLookupError}` : '.'}`);
@@ -244,7 +302,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   }
   lines.push('');
 
-  // 3. Blacklisted Roblox friends.
   lines.push(`[*] Checking if ${answers.roblox_username} is friends with any blacklisted users..`);
   if (!robloxUser) {
     lines.push(`[-] Could not check friends — Roblox account not found.`);
@@ -260,7 +317,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   }
   lines.push('');
 
-  // 4. Discord alt-account check (account age).
   lines.push(`[*] Checking if ${displayName}'s Discord account is an alt..`);
   if (member?.user?.createdTimestamp) {
     const ageDays = Math.floor((Date.now() - member.user.createdTimestamp) / (1000 * 60 * 60 * 24));
@@ -275,7 +331,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   }
   lines.push('');
 
-  // 5. Mutual-server blacklist check.
   lines.push(`[*] Checking ${displayName}'s discord mutuals..`);
   const mutualHits = [];
   if (member?.client && blacklistedDiscordIds.length) {
@@ -298,7 +353,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   }
   lines.push('');
 
-  // 6. Required Roblox group membership.
   lines.push(`[*] Checking if ${answers.roblox_username} is in the Roblox group..`);
   let requiredGroupOk = false;
   if (!robloxUser) {
@@ -316,8 +370,6 @@ export async function runVerificationChecks(answers, member, guildId) {
   return { lines, passed, total, requiredGroupOk, robloxUser };
 }
 
-// grabs messages from the ticket channel, formats them into a txt file,
-// and posts it to the transcript channel if one is set
 export async function sendTranscript(guild, channel, guildId) {
   const settings = statements.getGuildSettings.get(guildId);
   if (!settings?.transcript_channel_id) return;

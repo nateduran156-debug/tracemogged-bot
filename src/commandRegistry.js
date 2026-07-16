@@ -1,5 +1,10 @@
 import * as register from './commands/register.js';
 import * as raidscan from './commands/raidscan.js';
+import * as raidmanual from './commands/raidmanual.js';
+import * as raidticket from './commands/raidticket.js';
+import * as raidstart from './commands/raidstart.js';
+import * as raidstats from './commands/raidstats.js';
+import * as loa from './commands/loa.js';
 import * as promorole from './commands/promorole.js';
 import * as channels from './commands/channels.js';
 import * as activity from './commands/activity.js';
@@ -17,6 +22,16 @@ export const slashCommandData = [
   raidscan.data,
   raidscan.groupScanData,
   raidscan.addAttendeeData,
+  raidmanual.data,
+  raidticket.raidTicketData,
+  raidstart.raidStartData,
+  raidstats.raidStatsData,
+  raidstats.raidHistoryData,
+  raidstats.adjustPointsData,
+  raidstats.setKickThresholdData,
+  loa.loaData,
+  loa.loaEndData,
+  loa.checkLoaData,
   promorole.addData,
   promorole.removeData,
   promorole.listData,
@@ -39,4 +54,23 @@ export const slashCommandData = [
   lookup.data,
 ];
 
-export { register, raidscan, promorole, channels, activity, profile, whitelistCmd, ticketpanel, verify, vetting, boostprotect, backup, lookup };
+export {
+  register,
+  raidscan,
+  raidmanual,
+  raidticket,
+  raidstart,
+  raidstats,
+  loa,
+  promorole,
+  channels,
+  activity,
+  profile,
+  whitelistCmd,
+  ticketpanel,
+  verify,
+  vetting,
+  boostprotect,
+  backup,
+  lookup,
+};

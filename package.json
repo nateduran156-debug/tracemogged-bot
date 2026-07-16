@@ -1,11 +1,12 @@
 {
-  "name": "raid-bot",
+  "name": "@workspace/bot",
   "version": "1.0.0",
-  "description": "Discord bot for Roblox group registration, raid attendance tracking, promotion roles, activity checks, and a ticket/verification system.",
+  "description": "Discord bot for Roblox raid tracking, attendance, tickets, and promotion roles.",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
+    "dev": "node src/index.js",
     "deploy-commands": "node src/deploy-commands.js"
   },
   "license": "MIT",
