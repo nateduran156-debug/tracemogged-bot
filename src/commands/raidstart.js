@@ -4,7 +4,7 @@ import { buildContainer, componentsV2Payload, Colors } from '../components.js';
 
 export const raidStartData = new SlashCommandBuilder()
   .setName('raid-start')
-  .setDescription('DM all registered members that a raid is happening')
+  .setDescription('DM every server member that a raid is happening')
   .addChannelOption((o) =>
     o
       .setName('channel')
@@ -14,34 +14,35 @@ export const raidStartData = new SlashCommandBuilder()
   );
 
 export async function runRaidStart({ guild, channel, startedBy, reply }) {
-  const allUsers = statements.allUsers.all();
+  const channelLink = `https://discord.com/channels/${guild.id}/${channel.id}`;
+  const dmContent = (userId) => `<@${userId}> raid going on rn in #${channel.name}\n${channelLink}`;
 
-  if (!allUsers.length) {
+  // Fetch all server members (not just registered ones)
+  await guild.members.fetch();
+  const members = guild.members.cache.filter((m) => !m.user.bot);
+
+  if (!members.size) {
     await reply(
       componentsV2Payload(
         buildContainer({
           accentColor: Colors.warning,
-          heading: 'No Registered Members',
-          lines: ['No one is registered yet — nothing to send.'],
+          heading: 'No Members Found',
+          lines: ['Could not fetch any server members.'],
         })
       )
     );
     return;
   }
 
-  const channelLink = `https://discord.com/channels/${guild.id}/${channel.id}`;
-  const dmContent = `raid going on rn in #${channel.name}\n${channelLink}`;
-
   let delivered = 0;
   let failed = 0;
 
-  for (const user of allUsers) {
+  for (const [, member] of members) {
     try {
-      const member = await guild.members.fetch(user.discord_id).catch(() => null);
-      if (!member) { failed++; continue; }
-      await member.send({ content: dmContent });
+      await member.send({ content: dmContent(member.user.id) });
       delivered++;
     } catch {
+      // DMs closed or blocked — skip silently
       failed++;
     }
   }
@@ -55,9 +56,8 @@ export async function runRaidStart({ guild, channel, startedBy, reply }) {
           `**Channel:** <#${channel.id}>`,
           `**Started by:** <@${startedBy}>`,
           '',
-          '**Messages:**',
-          `Delivered: ${delivered}`,
-          `Not able to reach: ${failed}`,
+          `**Members DMed:** ${delivered}`,
+          `**Couldn't reach:** ${failed} (DMs closed or bot blocked)`,
         ],
       })
     )
