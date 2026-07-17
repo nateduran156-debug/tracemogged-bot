@@ -42,6 +42,7 @@ export const slashCommandData = [
   channels.setMissedChannelData,
   channels.setGateChannelData,
   channels.closeTicketData,
+  channels.closeRaidTicketData,
   channels.setTranscriptChannelData,
   activity.activityCheckData,
   activity.kickNonreactorsData,

@@ -344,6 +344,18 @@ async function handleSlashCommand(interaction) {
     return;
   }
 
+  if (name === 'closeraid') {
+    const raidTicket = statements.getRaidTicketChannel.get(interaction.channelId);
+    if (!raidTicket) {
+      await interaction.reply({ ...componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Not a Raid Ticket', lines: ['This command can only be used inside a raid ticket channel.'] })), ephemeral: true });
+      return;
+    }
+    statements.deleteRaidTicketChannel.run(interaction.channelId);
+    await interaction.reply(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Raid Ticket Closing', lines: ['This channel will be deleted in 5 seconds.'] })));
+    setTimeout(() => interaction.channel.delete('Raid ticket closed by staff').catch(() => {}), 5_000);
+    return;
+  }
+
   if (name === 'closeticket') {
     const ticket = statements.getTicket.get(interaction.channelId);
     if (!ticket) {

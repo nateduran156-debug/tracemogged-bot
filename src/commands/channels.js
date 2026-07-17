@@ -38,6 +38,10 @@ export const closeTicketData = new SlashCommandBuilder()
   .setName('closeticket')
   .setDescription('Close and delete this ticket channel after a 30-second warning');
 
+export const closeRaidTicketData = new SlashCommandBuilder()
+  .setName('closeraid')
+  .setDescription('Close and delete this raid ticket channel');
+
 export const setTranscriptChannelData = new SlashCommandBuilder()
   .setName('settranscriptchannel')
   .setDescription('Set the channel where ticket transcripts get saved when a ticket closes')

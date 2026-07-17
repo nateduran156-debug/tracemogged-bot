@@ -416,6 +416,18 @@ export default function registerMessageHandler(client) {
           break;
         }
 
+        case 'closeraid': {
+          const raidTicket = statements.getRaidTicketChannel.get(message.channelId);
+          if (!raidTicket) {
+            await message.reply(componentsV2Payload(buildContainer({ accentColor: Colors.warning, heading: 'Not a Raid Ticket', lines: ['This command can only be used inside a raid ticket channel.'] })));
+            break;
+          }
+          statements.deleteRaidTicketChannel.run(message.channelId);
+          await message.reply(componentsV2Payload(buildContainer({ accentColor: Colors.neutral, heading: 'Raid Ticket Closing', lines: ['This channel will be deleted in 5 seconds.'] })));
+          setTimeout(() => message.channel.delete('Raid ticket closed by staff').catch(() => {}), 5_000);
+          break;
+        }
+
         case 'closeticket': {
           const ticket = statements.getTicket.get(message.channelId);
           if (!ticket) {
